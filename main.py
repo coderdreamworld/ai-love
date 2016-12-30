@@ -1,5 +1,5 @@
 # coding:utf-8
-import sys
+import inspect
 import xlrd
 
 # 定义符号
@@ -17,10 +17,30 @@ simple_type_def = {
 }
 
 # 定义复合类型
-end_token_def = {
-    type_array: 'end',
-    type_dict: 'end',
+complex_token_def = {
+    type_array: ('array<', '>'),
+    type_dict: ('dict<', '>'),
 }
+
+
+# 判断是否简单类型
+def is_simple_type(ty):
+    return ty in simple_type_def
+
+
+# 将整数转换为excel的列
+def to_xls_col(num):
+    A = ord('A')
+    str = ''
+    tmp = num
+    while True:
+        factor = tmp / 26
+        remain = tmp % 26
+        tmp = factor
+        str += chr(remain + A)
+        if factor == 0:
+            break
+    return str[::-1]
 
 
 # 读取xls文件内容，并过滤注释行
@@ -37,10 +57,6 @@ def open_xls(filepath):
                 continue
             cells.append(sheet.row(y))
     return cells
-
-
-def is_simple_type(ty):
-    return ty in simple_type_def
 
 
 # 表头符号，每个符号由类型和名字组成，用于构造表格数据结构
@@ -79,7 +95,7 @@ class Proto:
     def tostr(self, identity):
         result = ''
         if self.type == type_array:
-            result += '%s (col %d,%d)' % (self.type, self.begin_col, self.end_col)
+            result += '%s (col %s,%s)' % (self.type, to_xls_col(self.begin_col), to_xls_col(self.end_col))
             result += '[\n'
             for i in range(len(self.members)):
                 (_, pt) = self.members[i]
@@ -90,16 +106,16 @@ class Proto:
             result += '\t' * identity
             result += ']'
         elif self.type == type_dict:
-            result += '%s (col %d,%d)' % (self.type, self.begin_col, self.end_col)
+            result += '%s (col %s,%s)' % (self.type, to_xls_col(self.begin_col), to_xls_col(self.end_col))
             result += '{\n'
             for i in range(len(self.members)):
                 (name, pt) = self.members[i]
                 result += '\t' * (identity+1)
                 result += name
                 if pt.begin_col == pt.end_col:
-                    result += '(col %d)' % pt.begin_col
+                    result += '(col %s)' % to_xls_col(pt.begin_col)
                 else:
-                    result += '(col %d,%d)' % (pt.begin_col, pt.end_col)
+                    result += '(col %s,%s)' % (to_xls_col(pt.begin_col), to_xls_col(pt.end_col))
                 result += ': '
                 result += pt.tostr(identity+1)
                 result += ','
@@ -107,7 +123,7 @@ class Proto:
             result += '\t' * identity
             result += '}'
         else:
-            result = '%s(col %d)' % (self.type, self.begin_col)
+            result = '%s(col %s)' % (self.type, to_xls_col(self.begin_col))
         return result
 
     def __str__(self):
@@ -137,6 +153,10 @@ class Parser:
     # 输出解析错误信息并退出程序
     def parse_error(self, msg):
         print '[parse error]%s' % msg
+        # stack = inspect.stack()
+        # print 'stack='
+        # for level in stack:
+        #     print level
         exit(1)
 
     # 解析简单类型
@@ -150,14 +170,14 @@ class Parser:
     # 解析复合类型
     def parse_complex_value(self, pt):
         cur = self.cur_token()
-        if cur.ty == type_array:
-            value = Proto(cur.ty)
+        if cur.ty == complex_token_def[type_array][0]:
+            value = Proto(type_array)
             value.begin_col = cur.col
             self.skip_token()
             self.parse_array(value)
             return value
-        elif cur.ty == type_dict:
-            value = Proto(cur.ty)
+        elif cur.ty == complex_token_def[type_dict][0]:
+            value = Proto(type_dict)
             value.begin_col = cur.col
             self.skip_token()
             self.parse_dict(value)
@@ -169,14 +189,17 @@ class Parser:
     # 解析数组类型
     def parse_array(self, arr):
         cur = self.cur_token()
-        end_token = end_token_def[type_array]
+        (_, end_token) = complex_token_def[type_array]
         while cur is not None:
             if cur.ty == end_token:
                 arr.end_col = cur.col
                 break
 
             value = None
-            if is_simple_type(cur.ty):
+            if cur.ty == '':
+                self.parse_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
+                break
+            elif is_simple_type(cur.ty):
                 value = self.parse_simple_value()
                 self.skip_token()
             else:
@@ -191,7 +214,7 @@ class Parser:
     # 解析字典类型
     def parse_dict(self, dict):
         cur = self.cur_token()
-        end_token = end_token_def[type_dict]
+        (_, end_token) = complex_token_def[type_dict]
         while cur is not None:
             if cur.ty == end_token:
                 dict.end_col = cur.col
@@ -203,7 +226,10 @@ class Parser:
                 break
 
             value = None
-            if is_simple_type(cur.ty):
+            if cur.ty == '':
+                self.parse_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
+                break
+            elif is_simple_type(cur.ty):
                 value = self.parse_simple_value()
                 self.skip_token()
             else:
