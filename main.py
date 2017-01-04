@@ -9,13 +9,15 @@ type_dict = 'dict'
 type_int = 'int'
 type_number = 'number'
 type_string = 'string'
-type_expr = 'expr'
+type_function = 'function'
+type_table = 'table'
 
 # 定义简单类型
 simple_type_def = {
     type_int: True,
     type_number: True,
     type_string: True,
+    type_table: True,
 }
 
 # 定义复合类型
@@ -27,30 +29,32 @@ complex_token_def = {
 
 # 判断是否简单类型
 def is_simple_type(ty):
-    return ty in simple_type_def
+    finded = ty in simple_type_def
+    if finded:
+        return True
 
-def is_single_col_complex_type(ty):
-    for k,v in complex_token_def.items():
-        if ty == v[0] + v[1]:
-            return k
+    # 判断是否函数类型
+    if ty.startswith(type_function):
+        return True
+
 
 # 将整数转换为excel的列
 def to_xls_col(num):
     A = ord('A')
-    str = ''
+    result = ''
     tmp = num
     while True:
         factor = tmp / 26
         remain = tmp % 26
         tmp = factor
-        str = chr(remain + A) + str
+        result = chr(remain + A) + result
         if factor == 0:
             break
-    return str
+    return result
 
 
 # 读取xls文件内容，并过滤注释行
-def open_xls(filepath):
+def read_cells_from_xls(filepath):
     workbook = xlrd.open_workbook(filepath)
     sheets = workbook.sheets()
     cells = []
@@ -80,7 +84,7 @@ class Token:
 
 
 # 表格数据结构，基于token流构造
-class Proto:
+class NodeParser:
     def __init__(self, type):
         self.type = type
         self.members = []
@@ -141,44 +145,34 @@ class Proto:
     def __str__(self):
         return self.tostr(0)
 
-
-class Expr(Proto):
-    def __init__(self):
-        Proto.__init__(self, type_expr)
-        self.argument = []
-
-    def add_argment(self, arg):
-        self.argument.append(arg)
-
-    def tostr(self, identity):
-        result = 'expr('
-        arg_count = len(self.argument)
-        for i in range(arg_count):
-            arg = self.argument[i]
-            result += arg
-            if i < arg_count - 1:
-                result += ','
-        result += ')'
-        return result + self.colstr()
+    def parse(self, cell_row):
+        if self.type == type_int:
+            text = cell_row[self.begin_col]
+            return str(int(text))
+        elif self.type == type_string:
+            text = cell_row[self.begin_col]
+            return r"'%s'" % text
+        else:
+            return ''
 
 
 # 解析器
-class Parser:
+class RootParser:
     def __init__(self, ts):
         self.tokens = ts
         self.pos = 0
 
         # 配置符合类型对应的解析函数
         self.parser_cfg = {
-            type_array: self.parse_array,
-            type_dict: self.parse_dict,
+            type_array: self.build_array_node,
+            type_dict: self.build_dict_node,
         }
 
-        root_node = Proto(type_dict)
+        root_node = NodeParser(type_dict)
         root_node.begin_col = self.cur_token().col
-        self.parse_dict(root_node)
+        self.build_dict_node(root_node)
         root_node.end_col = self.tokens[self.pos-1].col
-        self.proto_node = root_node
+        self.root_node = root_node
 
     # 取得当前读取位置的符号
     def cur_token(self):
@@ -191,143 +185,108 @@ class Parser:
         self.pos += 1
 
     # 输出解析错误信息并退出程序
-    def parse_error(self, msg):
-        print '[parse error]%s' % msg
-        # stack = inspect.stack()
-        # print 'stack='
-        # for level in stack:
-        #     print level
+    def build_node_error(self, msg):
+        print '[build node error]%s' % msg
         exit(1)
 
     # 解析简单类型
-    def parse_simple_value(self):
+    def build_simple_node(self):
         cur = self.cur_token()
-        pt = Proto(cur.ty)
+        pt = NodeParser(cur.ty)
         pt.begin_col = cur.col
         pt.end_col = cur.col
         return pt
 
     # 解析复合类型
-    def parse_complex_value(self, pt):
+    def build_complex_node(self, pt):
         cur = self.cur_token()
         for k,v in complex_token_def.items():
             if v[0] == cur.ty:
-                value = Proto(type_array)
+                value = NodeParser(k)
                 value.begin_col = cur.col
                 self.skip_token()
                 self.parser_cfg[k](value)
                 return value
-        self.parse_error('解析列%d的%s类型元素时,遇到了位于列%d的意外的符号\'%s\'' % (pt.begin_col, pt.type, cur.col, str(cur)))
+        self.build_node_error('解析列%d的%s类型元素时,遇到了位于列%d的意外的符号\'%s\'' % (pt.begin_col, pt.type, cur.col, str(cur)))
         return None
 
-    # 解析表达式类型
-    def parse_expr(self):
-        cur = self.cur_token()
-        pt = Expr()
-        pt.begin_col = cur.col
-        pt.end_col = cur.col
-        ty = cur.ty
-        if ty != type_expr:
-            m = re.match('expr\((.+)\)', ty)
-            if m is not None:
-                arg_str = m.group(1)
-                for arg in arg_str.split(','):
-                    pt.add_argment(arg)
-        return pt
-
     # 解析数组类型
-    def parse_array(self, arr):
+    def build_array_node(self, arr_node):
         cur = self.cur_token()
         (_, end_token) = complex_token_def[type_array]
         while cur is not None:
             if cur.ty == end_token:
-                arr.end_col = cur.col
+                arr_node.end_col = cur.col
                 break
 
-            value = None
             if cur.ty == '':
-                self.parse_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
+                self.build_node_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
                 break
             elif is_simple_type(cur.ty):
-                value = self.parse_simple_value()
+                value = self.build_simple_node()
                 self.skip_token()
             else:
-                # 解析表达式类型
-                if cur.ty.startswith(type_expr):
-                    value = self.parse_expr()
-                else:
-                    fold_ty = is_single_col_complex_type(cur.ty)
-                    if fold_ty is not None:
-                        value = Proto(fold_ty)
-                        value.begin_col = cur.col
-                        value.end_col = cur.col
-                    else:
-                        value = self.parse_complex_value(dict)
+                value = self.build_complex_node(arr_node)
                 self.skip_token()
             if value is not None:
-                arr.add_member(None, value)
+                arr_node.add_member(cur.id, value)
             cur = self.cur_token()
 
     # 解析字典类型
-    def parse_dict(self, dict):
+    def build_dict_node(self, dict_node):
         cur = self.cur_token()
         (_, end_token) = complex_token_def[type_dict]
         while cur is not None:
             if cur.ty == end_token:
-                dict.end_col = cur.col
+                dict_node.end_col = cur.col
                 break
 
-            value = None
             if cur.id == '':
-                self.parse_error('解析列%d的%s类型元素时,遇到位于列%d的元素缺少变量名' % (dict.begin_col, dict.type, cur.col))
+                self.build_node_error('解析列%d的%s类型元素时,遇到位于列%d的元素缺少变量名' % (dict_node.begin_col, dict_node.type, cur.col))
                 break
 
-            value = None
             if cur.ty == '':
-                self.parse_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
+                self.build_node_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
                 break
             elif is_simple_type(cur.ty):
-                value = self.parse_simple_value()
+                value = self.build_simple_node()
                 self.skip_token()
             else:
-                # 解析表达式类型
-                if cur.ty.startswith(type_expr):
-                    value = self.parse_expr()
-                else:
-                    fold_ty = is_single_col_complex_type(cur.ty)
-                    if fold_ty is not None:
-                        value = Proto(fold_ty)
-                        value.begin_col = cur.col
-                        value.end_col = cur.col
-                    else:
-                        value = self.parse_complex_value(dict)
+                value = self.build_complex_node(dict_node)
                 self.skip_token()
             if value is not None:
                 # 路径变量需要解析取得操作对象
-                idpath = cur.id.split('.')
-                length = len(idpath)
-                if length > 1:
-                    last_pt = dict
-                    for i in range(length-1):
-                        key = idpath[i]
-                        last_pt = last_pt.get_member(key)
-                        if last_pt is None:
-                            self.parse_error('idpath(%s) is invalid' % cur.id)
+                path_id = cur.id.split('.')
+                path_len = len(path_id)
+                if path_len > 1:
+                    last_node = dict_node
+                    for i in range(path_len-1):
+                        key = path_id[i]
+                        last_node = last_node.get_member(key)
+                        if last_node is None or last_node.type != type_dict:
+                            self.build_node_error('path_id(%s) is invalid' % cur.id)
                             break
-                    last_pt.add_member(idpath[length-1], value)
+                    last_node.add_member(path_id[path_len-1], value)
                 else:
-                    dict.add_member(cur.id, value)
+                    dict_node.add_member(cur.id, value)
             cur = self.cur_token()
 
-if __name__ == "__main__":
-    cells = open_xls('test.xlsx')    # 过滤注释行
+
+def build_node_parser(cells):
     ts = []
     for col in range(0, len(cells[0])):
         ty = cells[0][col].value
         iden = cells[1][col].value
         t = Token(ty, iden, col)
         ts.append(t)
-    ps = Parser(ts)
-    print ps.proto_node
+    ps = RootParser(ts)
+    return ps.root_node
+
+if __name__ == '__main__':
+    cells = read_cells_from_xls('test.xlsx')    # 过滤注释行
+    root_parser = build_node_parser(cells)
+    print root_parser
+
+
 
 
