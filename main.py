@@ -47,6 +47,17 @@ def to_xls_col(num):
     return result
 
 
+# 输出解析错误信息并退出程序
+def parse_error(msg):
+    print '[parser error]%s' % msg
+    exit(1)
+
+# 输出求值错误信息并退出程序
+def eval_error(msg):
+    print '[eval error]%s' % msg
+    exit(2)
+
+
 # 表头符号，每个符号由类型和名字组成，用于构造表格数据结构
 class Token:
     def __init__(self, ty, iden, col):
@@ -61,14 +72,22 @@ class Token:
             return '%s:%s' % (self.id, self.ty)
 
 
-# 表格数据结构，基于token流构造
+# 节点解析器，由表头定义构造，根据行数据求值
 class NodeParser:
     def __init__(self, type):
         self.type = type
         self.members = []
         self.begin_col = -1
         self.end_col = -1
-        self.text = None
+        self.raw_text = None    # 原始表头文本
+
+        self.explicit_export = False # 当节点为容器节点时，所有子项为空，也导出节点
+        self.cant_empty = True # 改节点不能为空
+        self.default_eval = None # 节点默认值
+
+        # 求值缓存
+        self.cache_eval = None
+        self.cache_cell_row = None
 
     # 添加元素项，数组类型name为None
     def add_member(self, name, pt):
@@ -81,47 +100,60 @@ class NodeParser:
         return None
 
     def eval(self, cell_row):
+        if self.cache_eval == cell_row:
+            return self.cache_eval
+
+        eval_str = 'nil'
         if self.type == type_int:
             val = cell_row[self.begin_col].value
             if val == '':
                 return 'nil'
             i = int(val)
-            return str(i)
+            eval_str = str(i)
         elif self.type == type_string:
             text = cell_row[self.begin_col].value
-            return '"' + text + '"'
+            eval_str = '"' + text + '"'
         elif self.type == type_number:
             val = cell_row[self.begin_col].value
-            return str(val)
+            eval_str = str(val)
         elif self.type == type_table:
             val = cell_row[self.begin_col].value
-            return '{' + val + '}'
+            eval_str = '{' + val + '}'
         elif self.type == type_function:
             val = cell_row[self.begin_col].value
-            return '%s return %s end' % (self.text, val)
+            eval_str = '%s return %s end' % (self.text, val)
         elif self.type == type_array:
-            result = '{'
+            eval_str = '{'
             mcount = len(self.members)
             for i in range(mcount):
                 (_,m) = self.members[i]
-                result += m.eval(cell_row)
+                eval_str += m.eval(cell_row)
                 if i <= mcount:
-                    result += ','
-            result += '}'
-            return result
+                    eval_str += ','
+            eval_str += '}'
         elif self.type == type_dict:
-            result = '{'
+            eval_str = '{'
             mcount = len(self.members)
             for i in range(mcount):
                 (id,m) = self.members[i]
-                result += '%s=%s' % (id, m.eval(cell_row))
+                eval_str += '%s=%s' % (id, m.eval(cell_row))
                 if i <= mcount:
-                    result += ','
-            result += '}'
-            return result
+                    eval_str += ','
+            eval_str += '}'
+            return eval_str
         else:
-            return 'nil'
+            eval_error('无法求值列%s未知类型%s' % (to_xls_col(self.begin_col), str(self.type)))
 
+        if eval_str == '':
+            eval_str = 'nil'
+
+        # 空值检查
+        if self.cant_empty and eval_str == 'nil':
+            eval_error('列%s项%s类型节点不能为空' % (to_xls_col(self.begin_col), str(self.type)))
+
+        self.cache_cell_row = cell_row 
+        self.cache_eval = eval_str
+        return eval_str
 
 # 解析器
 class SheetParser:
@@ -150,11 +182,6 @@ class SheetParser:
     # 读取头前进
     def skip_token(self):
         self.pos += 1
-
-    # 输出解析错误信息并退出程序
-    def parse_error(self, msg):
-        print '[parser error]%s' % msg
-        exit(1)
 
     # 解析简单类型
     def parse_simple_node(self):
@@ -193,10 +220,10 @@ class SheetParser:
                 value = self.parse_simple_node()
                 self.skip_token()
             elif cur.ty.startswith(type_function):
-                value = NodeParser(cur.ty)
+                value = NodeParser(type_function)
                 value.begin_col = cur.col
                 value.end_col = cur.col
-                value.text = cur.ty
+                value.raw_text = cur.ty
                 self.skip_token()
             else:
                 value = self.parse_complex_node(arr_node)
@@ -215,17 +242,17 @@ class SheetParser:
                 break
 
             if cur.id == '':
-                self.parse_error('解析列%d的%s类型元素时,遇到位于列%d的元素缺少变量名' % (dict_node.begin_col, dict_node.type, cur.col))
+                parse_error('解析列%d的%s类型元素时,遇到位于列%d的元素缺少变量名' % (dict_node.begin_col, dict_node.type, cur.col))
                 break
 
             if cur.ty == '':
-                self.parse_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
+                parse_error('列%d项%s没有声明类型' % (cur.col, str(cur.id)))
                 break
             elif is_simple_type(cur.ty):
                 value = self.parse_simple_node()
                 self.skip_token()
             elif cur.ty.startswith(type_function):
-                value = NodeParser(cur.ty)
+                value = NodeParser(type_function)
                 value.begin_col = cur.col
                 value.end_col = cur.col
                 value.text = cur.ty
@@ -243,7 +270,7 @@ class SheetParser:
                         key = path_id[i]
                         last_node = last_node.get_member(key)
                         if last_node is None or last_node.type != type_dict:
-                            self.parse_error('path_id(%s) is invalid' % cur.id)
+                            parse_error('path_id(%s) is invalid' % cur.id)
                             break
                     last_node.add_member(path_id[path_len-1], value)
                 else:
