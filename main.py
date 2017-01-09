@@ -1,4 +1,5 @@
 # coding:utf-8
+import os
 import xlrd
 
 # 定义符号
@@ -372,17 +373,22 @@ def build_parser_tree(sheet_name, sheet_cells):
 
 
 def xls_to_lua(file_path, out_file_path):
-    sheets = read_sheets_from_xls(file_path)    # 过滤注释行
-    for sheet_name, cells in sheets:
-        root_parser = build_parser_tree(sheet_name, cells)
-        _, key_node = root_parser.members[0]    # 约定第一项为key
-        for row in range(3, len(cells)):
-            row_data = cells[row]
-            coord = (sheet_name, row)
-            print '[%s]=%s,' % (key_node.eval(coord, row_data), root_parser.eval(coord, row_data))
+    table_name, _ = os.path.splitext(out_file_path)
+    with open(out_file_path, "w+") as f:
+        f.write('module("Data")\n')
+        f.write('%s={\n' % table_name)
+        sheets = read_sheets_from_xls(file_path)    # 过滤注释行
+        for sheet_name, cells in sheets:
+            root_parser = build_parser_tree(sheet_name, cells)
+            _, key_node = root_parser.members[0]    # 约定第一项为key
+            for row in range(3, len(cells)):
+                row_data = cells[row]
+                coord = (sheet_name, row)
+                f.write('[%s]=%s,\n' % (key_node.eval(coord, row_data), root_parser.eval(coord, row_data)))
+        f.write('}')
 
 if __name__ == '__main__':
-    xls_to_lua('test.xlsx', '')
+    xls_to_lua('test.xlsx', 'test.lua')
 
 
 
