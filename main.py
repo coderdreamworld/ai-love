@@ -78,11 +78,12 @@ def add_quout(text):
 
 # 表头符号，每个符号由类型和名字组成，用于构造表格数据结构
 class Token:
-    def __init__(self, option, decl_type, name, col):
+    def __init__(self, option, decl_type, name, col, sheet_name):
         self.option = option
         self.decl_type = decl_type
         self.name = name
         self.col = col
+        self.sheet_name = sheet_name
 
     def __str__(self):
         if self.decl_type == '':
@@ -102,6 +103,7 @@ class NodeParser:
         self.unique = None
         self.token = token
         self.eval_table = {}           # 求值存档
+        self.unique_check = {}         # 重复检查
         if token is not None:
             self.begin_col = token.col
             self.end_col = token.col
@@ -124,9 +126,9 @@ class NodeParser:
                 return False
         return True
 
-    def eval(self, row, row_data):
-        if row in self.eval_table:
-            return self.eval_table[row]
+    def eval(self, coord, row_data):
+        if coord in self.eval_table:
+            return self.eval_table[coord]
 
         eval_str = 'nil'
         # 单列类型空值处理
@@ -160,7 +162,7 @@ class NodeParser:
                 val = row_data[self.begin_col].value
                 eval_str = '%s return %s end' % (self.token.decl_type, val)
             elif self.type == type_array:
-                all_member_nil = self.is_all_member_nil(row, row_data)
+                all_member_nil = self.is_all_member_nil(coord, row_data)
                 # 全部子项为空，且该节点为可选类型，则不输出
                 if all_member_nil and not self.required:
                     eval_str = 'nil'
@@ -171,13 +173,13 @@ class NodeParser:
                     mcount = len(self.members)
                     for i in range(mcount):
                         (_, m) = self.members[i]
-                        eval_str += m.eval(row, row_data)
+                        eval_str += m.eval(coord, row_data)
                         eval_str += ','
                     if eval_str.endswith(','):
                         eval_str = eval_str[:-1]
                     eval_str += '}'
             elif self.type == type_dict:
-                all_member_nil = self.is_all_member_nil(row, row_data)
+                all_member_nil = self.is_all_member_nil(coord, row_data)
                 # 全部子项为空，且该节点为可选类型，则不输出
                 if all_member_nil and not self.required:
                     eval_str = 'nil'
@@ -188,7 +190,7 @@ class NodeParser:
                     mcount = len(self.members)
                     for i in range(mcount):
                         (key, m) = self.members[i]
-                        meval = m.eval(row, row_data)
+                        meval = m.eval(coord, row_data)
                         if meval != 'nil':
                             eval_str += '%s=%s' % (key, meval)
                             eval_str += ','
@@ -202,11 +204,14 @@ class NodeParser:
         if self.required and eval_str == 'nil':
             eval_error('列%s项%s类型节点不能为空' % (to_xls_col(self.begin_col), str(self.type)))
 
+        # 重复赋值检查
         if self.unique:
-            for y, v in self.eval_table.items():
-                if v == eval_str:
-                    eval_error('列%s项%s第%d行与第%d行重复赋值' % (to_xls_col(self.begin_col), str(self.token.name), row, y))
-        self.eval_table[row] = eval_str
+            if eval_str in self.unique_check:
+                exist_coord = self.unique_check[eval_str]
+                eval_error('列%s项%s表%s第%d行与表%s第%d行重复赋值' %
+                           (to_xls_col(self.begin_col), str(self.token.name), str(coord[0]), coord[1], str(exist_coord[0]), exist_coord[1]))
+            self.unique_check[eval_str] = coord
+        self.eval_table[coord] = eval_str
         return eval_str
 
 
@@ -354,13 +359,13 @@ def read_sheets_from_xls(file_path):
     return sheets
 
 
-def build_parser_tree(sheet_cells):
+def build_parser_tree(sheet_name, sheet_cells):
     ts = []
     for col in range(len(sheet_cells[0])):
         option = sheet_cells[0][col].value
         decl_type = sheet_cells[1][col].value
         name = sheet_cells[2][col].value
-        t = Token(option, decl_type, name, col)
+        t = Token(option, decl_type, name, col, sheet_name)
         ts.append(t)
     sp = SheetParser(ts)
     return sp.root_parser
@@ -368,12 +373,13 @@ def build_parser_tree(sheet_cells):
 
 def xls_to_lua(file_path, out_file_path):
     sheets = read_sheets_from_xls(file_path)    # 过滤注释行
-    for name, cells in sheets:
-        root_parser = build_parser_tree(cells)
+    for sheet_name, cells in sheets:
+        root_parser = build_parser_tree(sheet_name, cells)
         _, key_node = root_parser.members[0]    # 约定第一项为key
-        for y in range(3, len(cells)):
-            row = cells[y]
-            print '[%s]=%s,' % (key_node.eval(y, row), root_parser.eval(y, row))
+        for row in range(3, len(cells)):
+            row_data = cells[row]
+            coord = (sheet_name, row)
+            print '[%s]=%s,' % (key_node.eval(coord, row_data), root_parser.eval(coord, row_data))
 
 if __name__ == '__main__':
     xls_to_lua('test.xlsx', '')
