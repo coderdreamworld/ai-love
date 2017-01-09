@@ -61,7 +61,19 @@ def eval_error(msg):
 
 # 为字符串内容添加双引号
 def add_quout(text):
-    return '"' + text + '"'
+    out = ''
+    for c in text:
+        if c == '"':
+            out += '\\"'
+        elif c == '\\':
+            out += '\\\\'
+        elif c == '\n':
+            out += '\\n'
+        elif c == '\r':
+            out += '\\r'
+        else:
+            out += c
+    return '"' + out + '"'
 
 
 # 表头符号，每个符号由类型和名字组成，用于构造表格数据结构
@@ -87,15 +99,14 @@ class NodeParser:
         self.begin_col = -1
         self.end_col = -1
         self.required = None           # 该节点必须有值，对于容器类型则表示全部子项为空时仍会输出容器节点本身
+        self.unique = None
         self.token = token
+        self.eval_table = {}           # 求值存档
         if token is not None:
             self.begin_col = token.col
             self.end_col = token.col
             self.required = (token.option == 'required')
-
-        # 求值缓存
-        self.cache_eval = None
-        self.cache_cell_row = None
+            self.unique = (token.option == 'unique')
 
     # 添加元素项，数组类型name为None
     def add_member(self, name, pt):
@@ -107,49 +118,49 @@ class NodeParser:
                 return value
         return None
 
-    def is_all_member_nil(self, row_cells):
+    def is_all_member_nil(self, row, row_cells):
         for _, m in self.members:
-            if m.eval(row_cells) != 'nil':
+            if m.eval(row, row_cells) != 'nil':
                 return False
         return True
 
-    def eval(self, cell_row):
-        if self.cache_eval == cell_row:
-            return self.cache_eval
+    def eval(self, row, row_data):
+        if row in self.eval_table:
+            return self.eval_table[row]
 
         eval_str = 'nil'
         # 单列类型空值处理
-        if (self.type != type_array and self.type != type_dict) and cell_row[self.begin_col].value == '':
+        if (self.type != type_array and self.type != type_dict) and row_data[self.begin_col].value == '':
             eval_str = 'nil'
         else:
             if self.type == type_int:
-                val = cell_row[self.begin_col].value
+                val = row_data[self.begin_col].value
                 i = int(val)
                 eval_str = str(i)
             elif self.type == type_string:
-                val = cell_row[self.begin_col].value
+                val = row_data[self.begin_col].value
                 if val == '':
                     eval_str = 'nil'
                 else:
                     eval_str = add_quout(val)
             elif self.type == type_number:
-                val = cell_row[self.begin_col].value
+                val = row_data[self.begin_col].value
                 eval_str = str('%g' % val)
             elif self.type == type_bool:
-                val = cell_row[self.begin_col].value
+                val = row_data[self.begin_col].value
                 lower_str = str(val).lower()
                 if lower_str == '0' or lower_str == 'false':
                     eval_str = 'false'
                 else:
                     eval_str = 'true'
             elif self.type == type_table:
-                val = cell_row[self.begin_col].value
+                val = row_data[self.begin_col].value
                 eval_str = '{' + val + '}'
             elif self.type == type_function:
-                val = cell_row[self.begin_col].value
+                val = row_data[self.begin_col].value
                 eval_str = '%s return %s end' % (self.token.decl_type, val)
             elif self.type == type_array:
-                all_member_nil = self.is_all_member_nil(cell_row)
+                all_member_nil = self.is_all_member_nil(row, row_data)
                 # 全部子项为空，且该节点为可选类型，则不输出
                 if all_member_nil and not self.required:
                     eval_str = 'nil'
@@ -160,13 +171,13 @@ class NodeParser:
                     mcount = len(self.members)
                     for i in range(mcount):
                         (_, m) = self.members[i]
-                        eval_str += m.eval(cell_row)
+                        eval_str += m.eval(row, row_data)
                         eval_str += ','
                     if eval_str.endswith(','):
                         eval_str = eval_str[:-1]
                     eval_str += '}'
             elif self.type == type_dict:
-                all_member_nil = self.is_all_member_nil(cell_row)
+                all_member_nil = self.is_all_member_nil(row, row_data)
                 # 全部子项为空，且该节点为可选类型，则不输出
                 if all_member_nil and not self.required:
                     eval_str = 'nil'
@@ -177,7 +188,7 @@ class NodeParser:
                     mcount = len(self.members)
                     for i in range(mcount):
                         (key, m) = self.members[i]
-                        meval = m.eval(cell_row)
+                        meval = m.eval(row, row_data)
                         if meval != 'nil':
                             eval_str += '%s=%s' % (key, meval)
                             eval_str += ','
@@ -191,8 +202,11 @@ class NodeParser:
         if self.required and eval_str == 'nil':
             eval_error('列%s项%s类型节点不能为空' % (to_xls_col(self.begin_col), str(self.type)))
 
-        self.cache_cell_row = cell_row 
-        self.cache_eval = eval_str
+        if self.unique:
+            for y, v in self.eval_table.items():
+                if v == eval_str:
+                    eval_error('列%s项%s第%d行与第%d行重复赋值' % (to_xls_col(self.begin_col), str(self.token.name), row, y))
+        self.eval_table[row] = eval_str
         return eval_str
 
 
@@ -356,10 +370,10 @@ def xls_to_lua(file_path, out_file_path):
     sheets = read_sheets_from_xls(file_path)    # 过滤注释行
     for name, cells in sheets:
         root_parser = build_parser_tree(cells)
-        _, key_node = root_parser.members[0]
+        _, key_node = root_parser.members[0]    # 约定第一项为key
         for y in range(3, len(cells)):
             row = cells[y]
-            print '[%s]=%s,' % (key_node.eval(row), root_parser.eval(row))
+            print '[%s]=%s,' % (key_node.eval(y, row), root_parser.eval(y, row))
 
 if __name__ == '__main__':
     xls_to_lua('test.xlsx', '')
