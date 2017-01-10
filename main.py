@@ -215,6 +215,19 @@ class NodeParser:
         self.eval_table[coord] = eval_str
         return eval_str
 
+    def flat_fields(self):
+        flat_paths = {}
+        self.__flat__(None, flat_paths)
+        return flat_paths
+
+    def __flat__(self, prefix_path, flat_paths):
+        for name, m in self.members:
+            path = name
+            if prefix_path is not None:
+                path = prefix_path + '.' + name
+            flat_paths[path] = m
+            m.__flat__(path, flat_paths)
+
 
 # 解析器
 class SheetParser:
@@ -373,19 +386,18 @@ def build_parser_tree(sheet_name, sheet_cells):
 
 
 def xls_to_lua(file_path, out_file_path):
-    table_name, _ = os.path.splitext(out_file_path)
+    sheets = read_sheets_from_xls(file_path)    # 过滤注释行
+    out = '{\n'
+    for sheet_name, cells in sheets:
+        root_parser = build_parser_tree(sheet_name, cells)
+        _, key_node = root_parser.members[0]    # 约定第一项为key
+        for row in range(3, len(cells)):
+            row_data = cells[row]
+            coord = (sheet_name, row)
+            out += '[%s]=%s,\n' % (key_node.eval(coord, row_data), root_parser.eval(coord, row_data))
+    out += '}'
     with open(out_file_path, "w+") as f:
-        f.write('module("Data")\n')
-        f.write('%s={\n' % table_name)
-        sheets = read_sheets_from_xls(file_path)    # 过滤注释行
-        for sheet_name, cells in sheets:
-            root_parser = build_parser_tree(sheet_name, cells)
-            _, key_node = root_parser.members[0]    # 约定第一项为key
-            for row in range(3, len(cells)):
-                row_data = cells[row]
-                coord = (sheet_name, row)
-                f.write('[%s]=%s,\n' % (key_node.eval(coord, row_data), root_parser.eval(coord, row_data)))
-        f.write('}')
+        f.write(out)
 
 if __name__ == '__main__':
     xls_to_lua('test.xlsx', 'test.lua')
