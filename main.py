@@ -110,6 +110,8 @@ class NodeParser:
             self.end_col = token.col
             self.required = (token.option == 'required')
             self.unique = (token.option == 'unique')
+        # 记录塌陷子节点
+        self.flat_fields = {}
 
     # 添加元素项，数组类型name为None
     def add_member(self, name, pt):
@@ -215,10 +217,10 @@ class NodeParser:
         self.eval_table[coord] = eval_str
         return eval_str
 
-    def flat_fields(self):
-        flat_paths = {}
-        self.__flat__(None, flat_paths)
-        return flat_paths
+    # 塌陷解析树，将所有子节点平铺
+    def flat(self):
+        self.flat_fields = {}
+        self.__flat__(None, self.flat_fields)
 
     def __flat__(self, prefix_path, flat_paths):
         for name, m in self.members:
@@ -227,6 +229,7 @@ class NodeParser:
                 path = prefix_path + '.' + name
             flat_paths[path] = m
             m.__flat__(path, flat_paths)
+            m.flat()
 
 
 # 解析器
@@ -246,6 +249,7 @@ class SheetParser:
         self.parse_dict_node(root_node)
         root_node.end_col = self.tokens[self.pos-1].col
         self.root_parser = root_node
+        root_node.flat()
 
     # 取得当前读取位置的符号
     def cur_token(self):
@@ -387,15 +391,39 @@ def build_parser_tree(sheet_name, sheet_cells):
 
 def xls_to_lua(file_path, out_file_path):
     sheets = read_sheets_from_xls(file_path)    # 过滤注释行
+
+    exist_parsers = {}
+
+    # 求值
     out = '{\n'
     for sheet_name, cells in sheets:
-        root_parser = build_parser_tree(sheet_name, cells)
-        _, key_node = root_parser.members[0]    # 约定第一项为key
+        parser = build_parser_tree(sheet_name, cells)
+        exist_parsers[sheet_name] = parser
+        _, key_node = parser.members[0]    # 约定第一项为key
+        out += '--%s\n' % sheet_name
         for row in range(3, len(cells)):
             row_data = cells[row]
             coord = (sheet_name, row)
-            out += '[%s]=%s,\n' % (key_node.eval(coord, row_data), root_parser.eval(coord, row_data))
+            out += '[%s]=%s,\n' % (key_node.eval(coord, row_data), parser.eval(coord, row_data))
     out += '}'
+
+    # 交叉检查
+    for from_name, from_ps in exist_parsers.items():
+        for to_name, to_ps in exist_parsers.items():
+            if from_ps == to_ps:
+                continue
+            for path, m in from_ps.flat_fields.items():
+                if m.unique:
+                    if path not in to_ps.flat_fields:
+                        parse_error('unique field %s not define in sheet %s' % (path, sheet_name))
+                    else:
+                        unique_node = to_ps.flat_fields[path]
+                        for eval_str in unique_node.unique_check.keys():
+                            if eval_str in m.unique_check:
+                                eval_error('sheet %s unique field %s val=%s is dup to sheet %s' %
+                                           (from_name, path, eval_str, sheet_name))
+
+    # 输出文件
     with open(out_file_path, "w+") as f:
         f.write(out)
 
