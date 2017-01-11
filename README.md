@@ -13,6 +13,7 @@ python xls2lua.py < excel文件名> <输出文件名>
 python 2
 
 # 数据格式
+
 ## 注释行
 * 以双反斜杠「//」开头的行将被忽略
 * 空白行会被忽略
@@ -27,11 +28,17 @@ python 2
 * array 数组 以「array<」开始，「>」结束<br>
 * dict 字典 以「dict<」开始，「>」结束<br>
 * function 函数<br>
-  function(xxx)类型描述的数据会输出成「function(xxx) return <单元格内容> end」，当中function(xxx)是你列头写的
+  function(xxx)类型描述的数据会输出成「function(xxx) return <单元格内容> end」，当中function(xxx)是你列头写的  
   
 ## 数据属性
 * unique 不能重复
 * required 必须有值
+
+## 名字
+* 数组容器的元素名字不需要填写名字
+* 其余子项必须填写名字
+* 路径<br>
+  以变量路径为名字的例如「path1.path2.id」，将会从当前解析层级开始依次查找字典容器「path1」、「path2」，在「path2」容器中插入子项「id」
 
 # 其他
 支持多sheet<br>
