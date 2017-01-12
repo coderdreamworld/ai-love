@@ -23,6 +23,8 @@ python 2
 * number 浮点 <br>
 * string 字符串<br>
   单元格文本会被添加双引号，且遇到「"」「\n」「\r」会自动加斜杠
+* bool 布尔<br>
+  0会翻译成false，其余值都会翻译成true
 * table 单列表<br>
   table类型描述的数据将会在首尾添加一对大括号变成这样：「{<单元格内容>}」
 * array 数组 以「array<」开始，「>」结束<br>
