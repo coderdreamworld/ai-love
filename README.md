@@ -24,7 +24,7 @@ python 2
 * string 字符串<br>
   单元格文本会被添加双引号，且遇到「"」「\n」「\r」会自动加斜杠
 * bool 布尔<br>
-  0会翻译成false，其余值都会翻译成true
+  0和false会翻译成false，其余值都会翻译成true
 * table 单列表<br>
   table类型描述的数据将会在首尾添加一对大括号变成这样：「{<单元格内容>}」
 * array 数组 以「array<」开始，「>」结束<br>
@@ -32,9 +32,9 @@ python 2
 * function 函数<br>
   function(xxx)类型描述的数据会输出成「function(xxx) return <单元格内容> end」，当中function(xxx)是你列头写的  
   
-## 数据属性
-* unique 不能重复
-* required 必须有值
+## 数据修饰器
+* unique 不能重复，全局生效
+* required 必须有值，只在同一个sheet内生效
 
 ## 名字
 * 数组容器的元素名字不需要填写名字
