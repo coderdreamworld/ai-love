@@ -7,12 +7,30 @@
 为了让表格的数据描述能力比较强，又能尽量跟excel结合（在单元格中定义复杂数据，会丧失excel的拉数据功能）
 
 # 使用方法
-python xls2lua.py < excel文件名> <输出文件名>
+```
+python xls2lua.py <excel文件名> <输出文件名>
+```
+
+# 测试
+```
+python xls2lua.py example/test.xlsx test.lua
+```
 
 # 运行环境
 python 2
 
 # 数据格式
+
+## 表格数据格式
+* 每个sheet前三行有效行用作类型定义
+* 每个sheet第一列为主键
+
+修饰 |
+---|---
+类型 |
+名字 |
+
+
 
 ## 注释行
 * 以双反斜杠「//」开头的行将被忽略
@@ -24,7 +42,7 @@ python 2
 * string 字符串<br>
   单元格文本会被添加双引号，且遇到「"」「\n」「\r」会自动加斜杠
 * bool 布尔<br>
-  0和false会翻译成false，其余值都会翻译成true
+* 0和false会翻译成false，其余值都会翻译成true
 * table 单列表<br>
   table类型描述的数据将会在首尾添加一对大括号变成这样：「{<单元格内容>}」
 * array 数组 以「array<」开始，「>」结束<br>
