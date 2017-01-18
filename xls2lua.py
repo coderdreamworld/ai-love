@@ -1,7 +1,7 @@
 # coding:utf-8
 import sys
-import getopt
 import xlrd
+import codecs
 
 # 定义符号
 type_array = 'array'
@@ -430,7 +430,7 @@ def xls2lua(file_path, out_file_path):
             parser_check(to_name, to_ps, from_name, from_ps)
 
     # 输出文件
-    with open(out_file_path, "w+") as f:
+    with codecs.open(out_file_path, "w+", "utf-8") as f:
         f.write(out)
 
 
