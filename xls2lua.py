@@ -2,6 +2,9 @@
 import sys
 import xlrd
 import codecs
+reload(sys)
+sys.setdefaultencoding( "utf-8" )
+type = sys.getfilesystemencoding()
 
 # 定义符号
 type_array = 'array'
@@ -51,13 +54,13 @@ def to_xls_col(num):
 
 # 输出解析错误信息并退出程序
 def parse_error(msg):
-    print '[parser error]%s' % msg
+    print '[parser error]%s' % msg.decode('utf-8').encode(type)
     exit(1)
 
 
 # 输出求值错误信息并退出程序
 def eval_error(msg):
-    print '[eval error]%s' % msg
+    print '[eval error]%s' % msg.decode('utf-8').encode(type)
     exit(2)
 
 
@@ -447,7 +450,3 @@ def main(argv):
 
 if __name__ == '__main__':
     main(sys.argv)
-
-
-
-
